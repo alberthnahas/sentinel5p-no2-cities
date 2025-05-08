@@ -1,4 +1,5 @@
-## A. Downloading NO₂ Level in Major Cities using Sentinel-5P and openEO
+## Time Series Analysis for Cities using Sentinel-5P Total Column NO₂
+### A. Downloading NO₂ Level in Major Cities using Sentinel-5P and openEO
 
 This code is designed to perform a time-series analysis of Nitrogen Dioxide (NO₂) levels in several major cities around the world using data from the Sentinel-5P satellite, accessed through the openEO platform.  Nitrogen Dioxide is a significant air pollutant, often associated with urban and industrial activities, and its levels can be indicative of air quality trends.
 
@@ -54,7 +55,7 @@ This code will initiate batch processing jobs on the openEO backend. Once these 
 
 ---
 
-## B. Data Processing and Preparation for Time-Series Analysis
+### B. Data Processing and Preparation for Time-Series Analysis
 
 This section of the code takes over once the NetCDF files, containing the daily NO₂ level time series for each city, have been successfully downloaded and are available in your local environment (e.g., your Google Colab session's files).  This part focuses on reading these NetCDF files, transforming the data into a more convenient format (Pandas DataFrames), and performing some initial data processing steps to facilitate time-series analysis and visualization.
 
@@ -91,7 +92,7 @@ With the data processed and stored in `city_dfs`, you are now ready for the next
 
 ---
 
-## C. Visualization: Time-Series Plot of Daily NO₂ Levels for Each City
+### C. Visualization: Time-Series Plot of Daily NO₂ Levels for Each City
 
 This section focuses on visualizing the processed NO₂ time-series data to explore the temporal patterns and compare NO₂ levels across the selected cities throughout the year 2024.  It generates a figure containing six subplots, one for each city, displaying the daily NO₂ levels and a smoothed trend line.
 
@@ -133,7 +134,7 @@ By examining these time-series plots, you can visually analyze:
 
 ---
 
-## D. Visualization: Boxplot Comparison of Weekday vs. Weekend NO₂ Levels Across Cities
+### D. Visualization: Boxplot Comparison of Weekday vs. Weekend NO₂ Levels Across Cities
 
 This section creates a boxplot visualization to compare the distribution of daily NO₂ levels between weekdays and weekends for all six selected cities in 2024. Boxplots are excellent for visualizing and comparing the statistical distributions of data across different categories, in this case, day types (weekday vs. weekend) and cities.
 
@@ -175,7 +176,7 @@ This boxplot provides a concise and effective way to summarize and compare the c
 
 ---
 
-## E. Visualization: Seasonal Comparison of NO₂ Levels Across Cities
+### E. Visualization: Seasonal Comparison of NO₂ Levels Across Cities
 
 This final visualization section extends the analysis to explore potential seasonal variations in NO₂ levels across the selected cities.  By categorizing the daily NO₂ data into seasons (Winter, Spring, Summer, Autumn), we can investigate if there are recurring seasonal patterns in air pollution levels and compare these patterns across different geographical locations and climates.
 
@@ -228,7 +229,7 @@ This seasonal analysis provides a deeper understanding of the temporal dynamics 
 
 ---
 
-## F. Conclusion: Insights into Urban NO₂ Pollution from Sentinel-5P Time-Series Analysis
+### F. Conclusion: Insights into Urban NO₂ Pollution from Sentinel-5P Time-Series Analysis
 
 This analysis has successfully leveraged the openEO platform and Sentinel-5P satellite data to explore the temporal dynamics of Nitrogen Dioxide (NO₂) pollution in six major cities across the globe throughout the year 2024. By downloading, processing, and visualizing daily NO₂ level data, we have gained valuable insights into urban air quality patterns and potential influencing factors.
 

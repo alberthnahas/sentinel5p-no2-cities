@@ -231,7 +231,7 @@ This seasonal analysis provides a deeper understanding of the temporal dynamics 
 
 ### F. Conclusion: Insights into Urban NO₂ Pollution from Sentinel-5P Time-Series Analysis
 
-This analysis has successfully leveraged the openEO platform and Sentinel-5P satellite data to explore the temporal dynamics of Nitrogen Dioxide (NO₂) pollution in six major cities across the globe throughout the year 2024. By downloading, processing, and visualizing daily NO₂ level data, we have gained valuable insights into urban air quality patterns and potential influencing factors.
+This analysis has successfully leveraged the openEO platform and Sentinel-5P satellite data to explore the temporal dynamics of Nitrogen Dioxide (NO₂) pollution in six Omani cities throughout the year 2024. By downloading, processing, and visualizing daily NO₂ level data, we have gained valuable insights into urban air quality patterns and potential influencing factors.
 
 **Summary of Key Findings:**
 

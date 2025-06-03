@@ -1,4 +1,4 @@
-## Time Series Analysis for Cities using Sentinel-5P Total Column NO₂
+## Time Series Analysis for the Omani Cities using Sentinel-5P Total Column NO₂
 ### A. Downloading NO₂ Level in Major Cities using Sentinel-5P and openEO
 
 This code is designed to perform a time-series analysis of Nitrogen Dioxide (NO₂) levels in several major cities around the world using data from the Sentinel-5P satellite, accessed through the openEO platform.  Nitrogen Dioxide is a significant air pollutant, often associated with urban and industrial activities, and its levels can be indicative of air quality trends.
@@ -20,12 +20,12 @@ This code is designed to perform a time-series analysis of Nitrogen Dioxide (NO�
 
 The analysis focuses on the following six major cities, representing diverse geographical locations and pollution profiles:
 
-*   Jakarta, Indonesia
-*   Bangkok, Thailand
-*   Manila, Philippines
-*   New Delhi, India
-*   Sydney, Australia
-*   Beijing, China
+*   Muscat
+*   Salalah
+*   Sohar
+*   Nizwa
+*   Sur
+*   AlBuraimi
 
 For each city, a point Area of Interest (AOI) is defined using its approximate geographic coordinates (latitude and longitude).
 

@@ -8,258 +8,306 @@ import pandas as pd
 import seaborn as sns
 import numpy as np
 
-# Connect to your openEO backend (replace with your actual endpoint)
-connection = openeo.connect("openeo.dataspace.copernicus.eu").authenticate_oidc()
+# Connect to your openEO backend
+# Ensure you are authenticated if running non-interactively
+try:
+    print("Attempting to connect to openEO platform...")
+    connection = openeo.connect("openeo.dataspace.copernicus.eu").authenticate_oidc()
+    print("Successfully connected and authenticated with openEO.")
+except Exception as e:
+    print(f"Error connecting to openEO: {e}")
+    print("Please ensure you can authenticate with openeo.dataspace.copernicus.eu")
+    print("If running for the first time, follow the browser authentication steps.")
+    exit()
 
 # -------------------------------
-# Section A. Data Acquisition via openEO
+# Section A. Configuration
 # -------------------------------
-
-# Define AOIs for the six cities
-aois = {
-    "Jakarta": {
-        "type": "Point",
-        "coordinates": [106.85, -6.21]
-    },
-    "Bangkok": {
-        "type": "Point",
-        "coordinates": [100.50, 13.75]
-    },
-    "Manila": {
-        "type": "Point",
-        "coordinates": [120.98, 14.60]
-    },
-    "New Delhi": {
-        "type": "Point",
-        "coordinates": [77.21, 28.61]
-    },
-    "Sydney": {
-        "type": "Point",
-        "coordinates": [151.21, -33.87]
-    },
-    "Beijing": {
-        "type": "Point",
-        "coordinates": [116.40, 39.90]
-    },
+print("\n--- Configuration ---")
+# Define AOIs for cities in Oman
+# Format: CityName: [longitude, latitude]
+cities_coordinates = {
+    "Muscat": [58.54, 23.61],
+    "Salalah": [54.0924, 17.0151],
+    "Sohar": [56.7071, 24.3459],
+    "Nizwa": [57.5301, 22.9333],
+    "Sur": [59.5289, 22.5667],
+    "AlBuraimi": [55.7890, 24.2441]
 }
+print(f"Target cities: {list(cities_coordinates.keys())}")
 
-# Define the temporal extent for 2024 (full year)
-temporal_extent = ["2024-01-01", "2024-12-31"]
+# Define the temporal extent
+temporal_extent = ["2024-01-01", "2025-01-01"]
+year_str = temporal_extent[0][:4]
+print(f"Temporal extent: {temporal_extent[0]} to {temporal_extent[1]}")
 
-# Dictionary to store the openEO datasets for each city
-city_datasets = {}
+# Define Aerosol Index band and buffer for spatial extent
+product_band = "AER_AI_354_388" # UV Aerosol Index from Sentinel-5P
+product_name_for_file = "AerosolIndex354_388" # Used in filenames
+buffer_degrees = 0.5 # Buffer in degrees around the point for the spatial extent
+print(f"Using product band: {product_band}")
 
-# Loop through each city and load Sentinel-5P NO₂ data
-for city, aoi in aois.items():
-    print(f"Loading data for {city}...")
-    lon, lat = aoi["coordinates"]
+# --- Multiple Dust Event Threshold Configuration ---
+# Define a list of thresholds for statistical reporting on plots
+dust_event_thresholds_list = [0.75, 1.0, 1.5, 2.0, 2.5]
+print(f"Statistical analysis with AI thresholds: {dust_event_thresholds_list}")
 
-    # Load data for the single point (using the city's coordinates)
-    dataset = connection.load_collection(
-        "SENTINEL_5P_L2",
-        temporal_extent=temporal_extent,
-        spatial_extent={"west": lon, "south": lat, "east": lon, "north": lat},
-        bands=["NO2"],
-    )
+# Define thresholds for colored scatter points on timeseries plot
+threshold_yellow_min = 1.0
+threshold_orange_min = 1.5
+threshold_red_min = 2.0
+print(f"Timeseries plot color highlights: Yellow (AI > {threshold_yellow_min} to <= {threshold_orange_min}), Orange (AI > {threshold_orange_min} to <= {threshold_red_min}), Red (AI > {threshold_red_min})")
 
-    # Aggregate the data by day (mean over each day)
-    dataset = dataset.aggregate_temporal_period(reducer="mean", period="day")
 
-    # Spatial aggregation using the point AOI
-    dataset = dataset.aggregate_spatial(reducer="mean", geometries=aoi)
+# Loop through each city for data acquisition, processing, and plotting
+for city_name, coords in cities_coordinates.items():
+    print(f"\n--- Processing for city: {city_name} ({coords[1]}, {coords[0]}) ---")
+    lon, lat = coords
 
-    city_datasets[city] = dataset
+    # -------------------------------
+    # Section B. Data Acquisition via openEO
+    # -------------------------------
+    print(f"Defining data loading for {city_name} using band {product_band}...")
+    try:
+        dataset = connection.load_collection(
+            "SENTINEL_5P_L2", # Sentinel-5P Level 2 data
+            temporal_extent=temporal_extent,
+            spatial_extent={
+                "west": lon - buffer_degrees, "south": lat - buffer_degrees,
+                "east": lon + buffer_degrees, "north": lat + buffer_degrees,
+                "crs": "EPSG:4326" # Coordinate Reference System
+            },
+            bands=[product_band], # Specify the Aerosol Index band
+        )
+        # Aggregate to daily mean values for the defined spatial extent
+        dataset_daily_spatial_mean = dataset.aggregate_temporal_period(reducer="mean", period="day")
 
-print("Data loading complete via openEO.")
+        # Further aggregate spatially to get a single time series for the point of interest (city location)
+        # This effectively takes the mean of the already daily-averaged data within the feature geometry.
+        feature_collection_geometry = {
+            "type": "FeatureCollection",
+            "features": [{
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [lon, lat]},
+                "properties": {"id": city_name}
+            }]
+        }
+        processed_dataset = dataset_daily_spatial_mean.aggregate_spatial(
+            reducer="mean", geometries=feature_collection_geometry
+        )
+        print("Data loading definition complete via openEO.")
 
-# Execute batch processing to export each city’s data as a NetCDF file
-city_jobs = {}
-for city, dataset in city_datasets.items():
-    output_filename = f"NO2_2024_{city}.nc"
-    print(f"Executing batch job for {city} -> {output_filename} ...")
-    job = dataset.execute_batch(title=f"NO2 2024 - {city}", outputfile=output_filename)
-    city_jobs[city] = job
+        # Define output filename and job title for the batch job
+        output_filename = f"{product_name_for_file}_{year_str}_{city_name}.nc" # e.g., AerosolIndex354_388_2023_Muscat.nc
+        job_title = f"{product_name_for_file} {year_str} - {city_name}"
 
-print("Batch processing initiated for all cities. (Wait for the jobs to finish and the files to be available locally.)")
+        print(f"Executing batch job for {city_name} -> {output_filename} ... (This may take several minutes)")
+        # execute_batch submits the processing job to the openEO backend and downloads the result.
+        job = processed_dataset.execute_batch(title=job_title, outputfile=output_filename,
+                                             job_options={'driver-memory': '1g'}) # Example job option
+        print(f"Batch job for {city_name} completed. Output NetCDF: {output_filename}")
+    except Exception as e:
+        print(f"ERROR during openEO data acquisition or job execution for {city_name}: {e}")
+        continue # Skip to the next city if an error occurs
 
-# --------------------------------------------------------------------------------------
-# Section B. Data Processing & Visualization (once the NetCDF files are available locally)
-# --------------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------------------
+    # Section C. Data Processing (once the NetCDF file is available locally)
+    # --------------------------------------------------------------------------------------
+    df_plot = None # Initialize DataFrame
+    print(f"Attempting to load NetCDF data for {city_name} from {output_filename} ...")
+    try:
+        # Load the downloaded NetCDF file using xarray
+        ds = xr.load_dataset(output_filename)
 
-# Define AOIs for the six cities
-aois = {
-    "Jakarta": {
-        "type": "Point",
-        "coordinates": [106.85, -6.21]
-    },
-    "Bangkok": {
-        "type": "Point",
-        "coordinates": [100.50, 13.75]
-    },
-    "Manila": {
-        "type": "Point",
-        "coordinates": [120.98, 14.60]
-    },
-    "New Delhi": {
-        "type": "Point",
-        "coordinates": [77.21, 28.61]
-    },
-    "Sydney": {
-        "type": "Point",
-        "coordinates": [151.21, -33.87]
-    },
-    "Beijing": {
-        "type": "Point",
-        "coordinates": [116.40, 39.90]
-    },
-}
+        # Attempt to identify the time coordinate automatically
+        time_coord_name = 't' # Default assumption
+        if time_coord_name not in ds.coords:
+            potential_time_coords = [c for c in ds.coords if 'time' in c.lower() or ds[c].dtype == 'datetime64[ns]']
+            if potential_time_coords: time_coord_name = potential_time_coords[0]
+            elif list(ds.dims): time_coord_name = list(ds.dims)[0] # Fallback to first dimension
+            else: raise ValueError("No suitable time coordinate or dimension found in NetCDF.")
+        print(f"Using time coordinate: {time_coord_name}")
+        ds[time_coord_name] = pd.to_datetime(ds[time_coord_name].values) # Ensure datetime format
 
-# Create a dictionary to store processed DataFrames (one per city)
-city_dfs = {}
+        # Attempt to identify the Aerosol Index data variable
+        data_variable_name_in_file = product_band # Ideal case
+        if data_variable_name_in_file not in ds.data_vars:
+            print(f"Warning for {city_name}: Requested band '{data_variable_name_in_file}' not found as a direct data variable.")
+            print(f"Available data variables in NetCDF: {list(ds.data_vars.keys())}")
+            found_alt = False
+            # Try common variations if the exact name isn't present
+            for var_name in ds.data_vars:
+                if "aerosol_index" in var_name.lower() or "aer_ai" in var_name.lower() or product_band.lower() in var_name.lower():
+                    data_variable_name_in_file = var_name
+                    print(f"Using alternative data variable from file: '{data_variable_name_in_file}'")
+                    found_alt = True; break
+            if not found_alt: # If still not found
+                if list(ds.data_vars): # Use the first available data variable as a last resort
+                    data_variable_name_in_file = list(ds.data_vars)[0]
+                    print(f"Could not find a suitable aerosol index variable. Using first available data variable: '{data_variable_name_in_file}'")
+                else:
+                    raise ValueError("No data variables found in the NetCDF file.")
+        print(f"Using data variable: {data_variable_name_in_file}")
 
-for city in aois.keys():
-    file_name = f"NO2_2024_{city}.nc"
-    print(f"Loading NetCDF data for {city} from {file_name} ...")
+        # Convert to pandas DataFrame for easier plotting with seaborn/matplotlib
+        df = ds[[data_variable_name_in_file]].to_dataframe().reset_index()
+        # Rename columns to standard names used in plotting sections
+        df.rename(columns={data_variable_name_in_file: product_band, time_coord_name: 't'}, inplace=True)
 
-    ds = xr.load_dataset(file_name)
+        df_plot = df
+        print(f"Data processing complete for {city_name}!")
+    except FileNotFoundError:
+        print(f"ERROR: File {output_filename} not found for {city_name}. Please ensure the openEO job completed and downloaded the file.")
+        continue
+    except Exception as e:
+        print(f"ERROR loading or processing {output_filename} for {city_name}: {e}")
+        continue
 
-    # Convert the time coordinate to datetime (assuming the coordinate is named 't')
-    ds["t"] = pd.to_datetime(ds["t"].values)
+    # Proceed to plotting only if data was successfully loaded and processed
+    if df_plot is None or df_plot.empty:
+        print(f"No data available for visualization for {city_name}. Skipping plots.")
+        continue
+    else:
+        # ----------------------------------------------------------
+        # Section D. Timeseries Plot (Enhanced with Multi-Color Dust Event Highlighting)
+        # ----------------------------------------------------------
+        print(f"Generating timeseries plot for {city_name}...")
+        df_plot[f"{product_band}_7day_mean"] = df_plot[product_band].rolling(window=7, center=True, min_periods=1).mean()
 
-    # Convert the xarray dataset to a pandas DataFrame
-    # (Assuming the NO2 variable is stored as ds.NO2)
-    df = ds[["NO2"]].to_dataframe().reset_index()
+        plt.figure(figsize=(17, 8))
+        # Plot all daily AI values as grey dots (background)
+        plt.plot(df_plot["t"], df_plot[product_band], marker='o', markersize=4, linestyle='', color="lightgray", label=f"Daily {product_band}", zorder=1)
 
-    # Create columns for day-of-week and day type (Weekday vs Weekend)
-    # In Python's datetime, Monday=0 ... Sunday=6. We define weekend as Saturday (5) and Sunday (6)
-    df["day_of_week"] = df["t"].dt.weekday
-    df["day_type"] = np.where(df["day_of_week"] < 5, "Weekday", "Weekend")
+        # Define conditions for color highlighting
+        cond_yellow = (df_plot[product_band] > threshold_yellow_min) & (df_plot[product_band] <= threshold_orange_min)
+        cond_orange = (df_plot[product_band] > threshold_orange_min) & (df_plot[product_band] <= threshold_red_min)
+        cond_red = df_plot[product_band] > threshold_red_min
 
-    city_dfs[city] = df
+        # Plot highlighted events
+        if cond_yellow.any():
+            plt.scatter(df_plot.loc[cond_yellow, "t"], df_plot.loc[cond_yellow, product_band],
+                        color='yellow', edgecolor='darkgoldenrod', marker='o', s=50,
+                        label=f"AI ({threshold_yellow_min:.1f}-{threshold_orange_min:.1f})", zorder=3, alpha=0.8)
 
-print("Data processing complete!")
+        if cond_orange.any():
+            plt.scatter(df_plot.loc[cond_orange, "t"], df_plot.loc[cond_orange, product_band],
+                        color='orange', edgecolor='saddlebrown', marker='o', s=60,
+                        label=f"AI ({threshold_orange_min:.1f}-{threshold_red_min:.1f})", zorder=4, alpha=0.8)
 
-# ----------------------------------------------------------
-# Section C. Timeseries Plot: 6 Subplots (One for Each City)
-# ----------------------------------------------------------
-fig, axes = plt.subplots(nrows=6, ncols=1, figsize=(12, 18), sharex=True, sharey=True)
-fig.suptitle("Daily NO₂ Levels in 2024", fontsize=16)
+        if cond_red.any():
+            plt.scatter(df_plot.loc[cond_red, "t"], df_plot.loc[cond_red, product_band],
+                        color='red', edgecolor='black', marker='o', s=70,
+                        label=f"AI > {threshold_red_min:.1f}", zorder=5, alpha=0.8)
 
-for ax, (city, df) in zip(axes, city_dfs.items()):
-    # Multiply the NO2 levels by 10^4
-    df["NO2_scaled"] = df["NO2"] * 1e4
+        plt.plot(df_plot["t"], df_plot[f"{product_band}_7day_mean"], linestyle='--', color="blue", label="7-day Rolling Mean", zorder=2)
 
-    # Compute a 7-day rolling mean for the scaled data
-    df["NO2_7day_scaled"] = df["NO2_scaled"].rolling(window=7, center=True).mean()
+        plt.title(f"Daily {product_band} for {city_name} - {year_str} (Dust Intensity Highlighted)", fontsize=16)
+        plt.ylabel(f"{product_band} (Unitless)")
+        plt.xlabel("Date")
 
-    # Plot raw daily NO₂ (scaled) as circles (no connecting lines)
-    ax.plot(df["t"], df["NO2_scaled"], marker='o', linestyle='', color="lightgray", label="Daily NO₂")
-    # Plot the 7-day rolling mean as a continuous blue line
-    ax.plot(df["t"], df["NO2_7day_scaled"], linestyle='--', color="blue", label="7-day Rolling Mean")
+        mean_val = df_plot[product_band].mean()
+        median_val = df_plot[product_band].median()
+        max_val = df_plot[product_band].max()
+        data_point_count = len(df_plot)
 
-    # Retrieve coordinates for the city from the aois dictionary
-    coords = aois[city]["coordinates"]
-    # Update the title to include the city's name and its coordinates (lon, lat)
-    ax.set_title(f"{city} ({coords[0]}, {coords[1]})")
+        stats_text_lines = [
+            f"Mean AI: {mean_val:.2f}", f"Median AI: {median_val:.2f}",
+            f"Max AI: {max_val:.2f}", f"Data Points: {data_point_count}",
+            "--- Event Days (Stat Thresholds) ---"
+        ]
+        for thold in dust_event_thresholds_list: # Uses the separate list for stats
+            num_event_days_thold = (df_plot[product_band] > thold).sum()
+            stats_text_lines.append(f"Days AI > {thold:.2f}: {num_event_days_thold}")
 
-    # Compute statistics from the scaled daily NO₂ values
-    mean_val = df["NO2_scaled"].mean()
-    median_val = df["NO2_scaled"].median()
-    max_val = df["NO2_scaled"].max()
+        stats_text = "\n".join(stats_text_lines)
+        plt.text(0.02, 0.98, stats_text, transform=plt.gca().transAxes, verticalalignment='top',
+                bbox=dict(boxstyle='round,pad=0.5', fc='white', alpha=0.85))
 
-    # Get the number of data points for the current city
-    data_point_count = len(df)
+        plt.grid(True)
+        plt.legend(loc='upper right')
+        plt.tight_layout()
+        plot_filename_timeseries = f'{product_name_for_file}_timeseries_intensity_{city_name}_{year_str}.png'
+        plt.savefig(plot_filename_timeseries, dpi=300)
+        print(f"Saved timeseries plot: {plot_filename_timeseries}")
+        # plt.show() # In Colab, plots usually show automatically or use plt.close()
+        plt.close() # Close the figure to free memory
 
-    # Create a text string with the computed statistics and data point count (formatted to two decimal places)
-    stats_text = f"Mean: {mean_val:.2f}\nMedian: {median_val:.2f}\nMax: {max_val:.2f}\nN Data: {data_point_count}"
-    # Place the statistics text in the top left of the subplot (using axis coordinates)
-    ax.text(0.02, 0.95, stats_text, transform=ax.transAxes, verticalalignment='top',
-            bbox=dict(facecolor='white', alpha=0.5))
+        # ----------------------------------------------------------
+        # Section E. Histogram of Aerosol Index Values
+        # ----------------------------------------------------------
+        print(f"Generating histogram for {city_name}...")
+        plt.figure(figsize=(10, 6))
+        sns.histplot(df_plot[product_band].dropna(), kde=True, bins=30) # dropna for robustness
+        plt.title(f"Distribution of Daily {product_band} for {city_name} ({year_str})", fontsize=16)
+        plt.xlabel(f"{product_band} (Unitless)")
+        plt.ylabel("Frequency")
+        plt.axvline(mean_val, color='red', linestyle='dashed', linewidth=1, label=f'Mean: {mean_val:.2f}')
+        plt.axvline(median_val, color='green', linestyle='dashed', linewidth=1, label=f'Median: {median_val:.2f}')
 
-    ax.set_ylabel("NO₂ (x $10^4$ mol/m²)")
-    ax.grid(True)
-    ax.legend()
+        hist_threshold_colors = plt.cm.viridis(np.linspace(0, 0.8, len(dust_event_thresholds_list)))
+        for i, thold in enumerate(dust_event_thresholds_list):
+            plt.axvline(thold, color=hist_threshold_colors[i], linestyle='dotted', linewidth=1.5, label=f'Stat Threshold: {thold:.2f}')
 
-axes[-1].set_xlabel("Date")
-plt.tight_layout(rect=[0, 0, 1, 0.96])
-plt.savefig('no2_timeseries.png', dpi=300)
-plt.show()
+        plt.legend()
+        plt.grid(axis='y', linestyle='--', alpha=0.7)
+        plt.tight_layout()
+        plot_filename_hist = f'{product_name_for_file}_histogram_{city_name}_{year_str}.png'
+        plt.savefig(plot_filename_hist, dpi=300)
+        print(f"Saved histogram: {plot_filename_hist}")
+        plt.close()
 
-# ----------------------------------------------------------
-# Section D. Boxplot: Weekdays vs Weekends for All Cities
-# ----------------------------------------------------------
+        # ----------------------------------------------------------
+        # Section F. Boxplot: Seasonal Analysis
+        # ----------------------------------------------------------
+        print(f"Generating seasonal boxplot for {city_name}...")
+        df_plot["month"] = df_plot["t"].dt.month
+        def assign_season(row_month): # Simple season assignment for Northern Hemisphere
+            if row_month in [12, 1, 2]: return 'Winter (DJF)'
+            elif row_month in [3, 4, 5]: return 'Spring (MAM)'
+            elif row_month in [6, 7, 8]: return 'Summer (JJA)'
+            else: return 'Fall (SON)'
+        df_plot["season"] = df_plot["month"].apply(assign_season)
+        season_order = ["Winter (DJF)", "Spring (MAM)", "Summer (JJA)", "Fall (SON)"]
 
-# Combine data from all cities into a single DataFrame
-combined_df = pd.concat([df.assign(city=city) for city, df in city_dfs.items()], ignore_index=True)
+        plt.figure(figsize=(10, 6))
+        sns.boxplot(x="season", y=product_band, data=df_plot, palette="Set3", order=season_order)
+        plt.title(f"Seasonal Distribution of {product_band} for {city_name} ({year_str})", fontsize=16)
+        for thold_idx, thold in enumerate(dust_event_thresholds_list):
+            plt.axhline(y=thold, color=hist_threshold_colors[thold_idx], linestyle=':', linewidth=1.0, alpha=0.9)
+        plt.xlabel("Season")
+        plt.ylabel(f"{product_band} (Unitless)")
+        plt.grid(axis="y", linestyle='--', alpha=0.7)
+        plt.tight_layout()
+        plot_filename_seasonal = f'{product_name_for_file}_seasonal_boxplot_{city_name}_{year_str}.png'
+        plt.savefig(plot_filename_seasonal, dpi=300)
+        print(f"Saved seasonal boxplot: {plot_filename_seasonal}")
+        plt.close()
 
-plt.figure(figsize=(12, 6))
-sns.boxplot(x="city", y="NO2_scaled", hue="day_type", data=combined_df, palette="Set2")
-plt.title("Comparison of NO₂ Levels: Weekdays vs Weekends (2024)")
-plt.xlabel("City")
-plt.ylabel("NO₂ (x $10^4$ mol/m²)")
-plt.legend(title="Day Type")
-plt.grid(axis="y")
-plt.tight_layout()
-plt.savefig('no2_daytype.png', dpi=300)
-plt.show()
+        # ----------------------------------------------------------
+        # Section G. Boxplot: Monthly Analysis
+        # ----------------------------------------------------------
+        print(f"Generating monthly boxplot for {city_name}...")
+        month_names_map = {
+            1: "Jan", 2: "Feb", 3: "Mar", 4: "Apr", 5: "May", 6: "Jun",
+            7: "Jul", 8: "Aug", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dec"
+        }
+        df_plot['month_name'] = pd.Categorical(df_plot['month'].map(month_names_map), categories=month_names_map.values(), ordered=True)
 
-# ----------------------------------------------------------
-# Section E. Boxplot: Seasonal Analysis for All Cities
-# ----------------------------------------------------------
+        plt.figure(figsize=(12, 7))
+        sns.boxplot(x="month_name", y=product_band, data=df_plot, palette="coolwarm")
+        plt.title(f"Monthly Distribution of {product_band} for {city_name} ({year_str})", fontsize=16)
+        for thold_idx, thold in enumerate(dust_event_thresholds_list):
+            plt.axhline(y=thold, color=hist_threshold_colors[thold_idx], linestyle=':', linewidth=1.0, alpha=0.9)
+        plt.xlabel("Month")
+        plt.ylabel(f"{product_band} (Unitless)")
+        plt.grid(axis="y", linestyle='--', alpha=0.7)
+        plt.tight_layout()
+        plot_filename_monthly = f'{product_name_for_file}_monthly_boxplot_{city_name}_{year_str}.png'
+        plt.savefig(plot_filename_monthly, dpi=300)
+        print(f"Saved monthly boxplot: {plot_filename_monthly}")
+        plt.close()
 
-# Example "aois" dictionary (update if necessary)
-aois = {
-    "Jakarta": {"type": "Point", "coordinates": [106.85, -6.21]},
-    "Bangkok": {"type": "Point", "coordinates": [100.50, 13.75]},
-    "Manila":  {"type": "Point", "coordinates": [120.98, 14.60]},
-    "New Delhi": {"type": "Point", "coordinates": [77.21, 28.61]},
-    "Sydney": {"type": "Point", "coordinates": [151.21, -33.87]},
-    "Beijing": {"type": "Point", "coordinates": [116.40, 39.90]},
-}
-
-# Combine data from all cities into a single DataFrame.
-combined_df = pd.concat([df.assign(city=city) for city, df in city_dfs.items()], ignore_index=True)
-
-# Ensure the datetime column is parsed properly.
-combined_df["t"] = pd.to_datetime(combined_df["t"])
-combined_df["month"] = combined_df["t"].dt.month
-
-# Define a function to assign a season based on month and the city's latitude.
-def assign_season(row):
-    month = row['month']
-    # Get the city's latitude from the "aois" dictionary.
-    lat = aois[row['city']]['coordinates'][1] if row['city'] in aois else 0
-    if lat >= 0:  # Northern Hemisphere
-        if month in [12, 1, 2]:
-            return 'Winter'
-        elif month in [3, 4, 5]:
-            return 'Spring'
-        elif month in [6, 7, 8]:
-            return 'Summer'
-        else:
-            return 'Fall'
-    else:  # Southern Hemisphere
-        if month in [12, 1, 2]:
-            return 'Summer'
-        elif month in [3, 4, 5]:
-            return 'Fall'
-        elif month in [6, 7, 8]:
-            return 'Winter'
-        else:
-            return 'Spring'
-
-# Apply the season assignment to the combined DataFrame.
-combined_df["season"] = combined_df.apply(assign_season, axis=1)
-
-# Create a boxplot for seasonal analysis.
-plt.figure(figsize=(12, 6))
-sns.boxplot(x="city", y="NO2_scaled", hue="season", data=combined_df, palette="Set2")
-plt.title("Comparison of NO₂ Levels by Season (2024)")
-plt.xlabel("City")
-plt.ylabel("NO₂ (x $10^4$ mol/m²)")
-plt.legend(title="Season")
-plt.grid(axis="y")
-plt.tight_layout()
-plt.savefig('no2_seasonal.png', dpi=300)
-plt.show()
+print("\n--- Script finished for all configured Omani cities. ---")
+print("Output NetCDF files and PNG plots are saved in your Colab environment's current working directory.")
+print("You can download them from the file browser panel on the left.")
 
